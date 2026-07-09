@@ -45,17 +45,36 @@ class PostEffects:
     def fade(
         track: Track, note_data: NDArray[np.float64], note: NoteEvent
     ) -> NDArray[np.float64]:
-        fade_time = note.opts.get("fade_time", track.opts.get("fade_time", 0.01))
         sample_rate = track.sample_rate
+
+        fade_time = note.opts.get("fade_time", track.opts.get("fade_time", 0.01))
+        fade_in_time = note.opts.get(
+            "fade_in_time", track.opts.get("fade_in_time", fade_time)
+        )
+        fade_out_time = note.opts.get(
+            "fade_out_time", track.opts.get("fade_out_time", fade_time)
+        )
+
         start_frame = int(note.start * sample_rate)
         stop_frame = int(note.stop * sample_rate)
-        fade_size = int(fade_time * sample_rate)
 
-        note_time = np.arange(stop_frame - start_frame) / sample_rate
-        fade_volumes = np.ones_like(note_time)
+        note_frames = int(stop_frame - start_frame)
 
-        fade_volumes[:fade_size] *= np.linspace(0.0, 1.0, fade_size)
-        fade_volumes[-fade_size:] *= np.linspace(1.0, 0.0, fade_size)
+        fade_in_frames = int(fade_in_time * sample_rate)
+        fade_out_frames = int(fade_out_time * sample_rate)
+
+        fade_volumes = np.ones(note_frames)
+
+        fade_in_volumes = np.linspace(0.0, 1.0, fade_in_frames)
+        fade_out_volumes = np.linspace(1.0, 0.0, fade_out_frames)
+
+        fade_scale = min(note_frames / (fade_in_frames + fade_out_frames), 1)
+        fade_volumes[: int(fade_in_frames * fade_scale)] = fade_in_volumes[
+            : int(fade_in_frames * fade_scale)
+        ]
+        fade_volumes[-int(fade_out_frames * fade_scale) :] = fade_out_volumes[
+            -int(fade_out_frames * fade_scale) :
+        ]
 
         return note_data * fade_volumes
 

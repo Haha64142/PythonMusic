@@ -50,7 +50,9 @@ def signal(track: Track, note: NoteEvent):
 
 sample_rate = 48000
 track = Track(sample_rate)
-# track.opts["fade_time"] = 0.4
+# track.opts["fade_time"] = 0.01
+# track.opts["fade_in_time"] = 0.01
+# track.opts["fade_out_time"] = 0.49
 # track.set_func("post_effects", PostEffects.none)
 # track.set_func("signal", signal)
 
