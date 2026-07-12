@@ -1,15 +1,52 @@
-from typing import Dict, Any
+import numpy as np
+from typing import Dict, Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 from enum import Enum
 
 
+if TYPE_CHECKING:
+    from track import NoteData
+
+
 @dataclass
 class NoteEvent:
-    freq: float = 0
-    start: float = 0
-    stop: float = 0
+    freq: float
+    start: float
+    stop: float
     volume: float = 1.0
     opts: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class NoteTimes:
+    sample_rate: int
+    start_frame: int
+    _stop_frame: int
+    _total_frames: int
+    _times: NoteData = field(default_factory=lambda: np.array(NoteData))
+
+    def __init__(self, sample_rate, start_frame, times):
+        self.sample_rate = sample_rate
+        self.start_frame = start_frame
+        self.times = times
+
+    @property
+    def times(self) -> NoteData:
+        return self._times
+
+    @times.setter
+    def times(self, value: NoteData) -> None:
+        self._times = value
+        self._total_frames = len(self._times)
+        self._stop_frame = self.start_frame + self._total_frames
+
+    @property
+    def stop_frame(self) -> int:
+        return self._stop_frame
+
+    @property
+    def total_frames(self) -> int:
+        return self._stop_frame - self.start_frame
 
 
 class Notes(float, Enum):

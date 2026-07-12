@@ -1,72 +1,78 @@
 import numpy as np
 import math
-from notes import NoteEvent
+from notes import NoteEvent, NoteTimes
 from numpy.typing import NDArray
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from track import Track
+    from track import Track, TrackData, NoteData
 
 
-def curve(times: NDArray[np.float64], curvature: float) -> NDArray[np.float64]:
-    if curvature == 0:
-        return times
+class ADSR:
+    @staticmethod
+    def adsr_curve(times: NoteData, curvature: float) -> NoteData:
+        if curvature == 0:
+            return times
 
-    return (np.exp2(curvature * times) - 1) / (math.exp2(curvature) - 1)
+        return (np.exp2(curvature * times) - 1) / (math.exp2(curvature) - 1)
 
+    @staticmethod
+    def inverse_adsr_curve(value: float, curvature: float) -> float:
+        if curvature == 0:
+            return value
 
-def inverse_curve(value: float, curvature: float) -> float:
-    if curvature == 0:
-        return value
-
-    return math.log2(1 + value * (math.exp2(curvature) - 1)) / curvature
+        return math.log2(1 + value * (math.exp2(curvature) - 1)) / curvature
 
 
 class Waveforms:
     @staticmethod
-    def sin(track: Track, note: NoteEvent) -> NDArray[np.float64]:
-        sample_rate = track.sample_rate
-        start_frame = int(note.start * sample_rate)
-        stop_frame = int(note.stop * sample_rate)
-
-        note_time = np.arange(stop_frame - start_frame) / sample_rate
-        signal = np.sin(2 * math.pi * note.freq * note_time)
+    def sin(_track: Track, note_times: NoteTimes, note: NoteEvent) -> NoteData:
+        signal = np.sin(2 * math.pi * note.freq * note_times.times)
         return signal
 
 
-class PostEffects:
+class NotePreEffects:
+    @staticmethod
+    def none(_track: Track, note: NoteEvent) -> NoteEvent:
+        return note
+
+
+class NotePostEffects:
     @staticmethod
     def none(
-        _track: Track, note_data: NDArray[np.float64], _note: NoteEvent
-    ) -> NDArray[np.float64]:
+        _track: Track,
+        note_data: NoteData,
+        _note_times: NoteTimes,
+        _note: NoteEvent,
+    ) -> NoteData:
         return note_data
 
     @staticmethod
     def fade(
-        track: Track, note_data: NDArray[np.float64], note: NoteEvent
-    ) -> NDArray[np.float64]:
-        sample_rate = track.sample_rate
+        track: Track,
+        note_data: NoteData,
+        note_times: NoteTimes,
+        note: NoteEvent,
+    ) -> NoteData:
+        sample_rate = note_times.sample_rate
 
-        fade_time = note.opts.get("fade_time", track.opts.get("fade_time", 0.01))
-        fade_in_time = note.opts.get(
+        fade_time: float = note.opts.get("fade_time", track.opts.get("fade_time", 0.01))
+        fade_in_time: float = note.opts.get(
             "fade_in_time", track.opts.get("fade_in_time", fade_time)
         )
-        fade_out_time = note.opts.get(
+        fade_out_time: float = note.opts.get(
             "fade_out_time", track.opts.get("fade_out_time", fade_time)
         )
 
-        start_frame = int(note.start * sample_rate)
-        stop_frame = int(note.stop * sample_rate)
-
-        note_frames = int(stop_frame - start_frame)
+        note_frames = note_times.total_frames
 
         fade_in_frames = int(fade_in_time * sample_rate)
         fade_out_frames = int(fade_out_time * sample_rate)
 
-        fade_volumes = np.ones(note_frames)
+        fade_volumes: NoteData = np.ones(note_frames)
 
-        fade_in_volumes = np.linspace(0.0, 1.0, fade_in_frames)
-        fade_out_volumes = np.linspace(1.0, 0.0, fade_out_frames)
+        fade_in_volumes: NoteData = np.linspace(0.0, 1.0, fade_in_frames)
+        fade_out_volumes: NoteData = np.linspace(1.0, 0.0, fade_out_frames)
 
         fade_scale = min(note_frames / (fade_in_frames + fade_out_frames), 1)
         fade_volumes[: int(fade_in_frames * fade_scale)] = fade_in_volumes[
@@ -79,48 +85,75 @@ class PostEffects:
         return note_data * fade_volumes
 
 
+class TrackPostEffects:
+    @staticmethod
+    def master_volume(track: Track, track_data: TrackData) -> TrackData:
+        return track_data * track.opts.get("master_volume", 0.2)
+
+    @staticmethod
+    def clip_volume(track: Track, track_data: TrackData) -> TrackData:
+        clip_volume: float = track.opts.get("clip_volume", 0.8)
+        peak: float = np.max(np.abs(track_data))
+        if peak <= clip_volume:
+            return track_data
+
+        return track_data * clip_volume / peak
+
+
 class Defaults:
     @staticmethod
-    def generate(track: Track) -> NDArray[np.float64]:
+    def setup(track: Track) -> TrackData:
+        track_size = track.get_track_size()
+        track_data: TrackData = np.zeros(track_size, np.float64)
+        return track_data
+
+    @staticmethod
+    def note_times(track: Track, note: NoteEvent) -> NoteTimes:
+        sample_rate = track.sample_rate
+        start_frame = int(note.start * sample_rate)
+        stop_frame = int(note.stop * sample_rate)
+        note_times: NoteData = np.arange(stop_frame - start_frame) / sample_rate
+        return NoteTimes(sample_rate, start_frame, note_times)
+
+    note_post_effects = vars(NotePostEffects)["none"]
+    wave = vars(Waveforms)["sin"]
+
+    @staticmethod
+    def signal(track: Track, note_times: NoteData, note: NoteEvent) -> NoteData:
+        note_data: NoteData = track.call_func("wave", note_times, note) * note.volume
+        note_data: NoteData = track.call_func(
+            "note_post_effects", note_data, note_times, note
+        )
+        return note_data
+
+    note_pre_effects = vars(NotePreEffects)["none"]
+
+    @staticmethod
+    def main_logic(track: Track, track_data: TrackData) -> TrackData:
+        track_data = track_data
+        for note in track._notes:
+            note = track.call_func("note_pre_effects", note)
+            note_times: NoteTimes = track.call_func("note_times", note)
+            track_data[note_times.start_frame : note_times.stop_frame] = (
+                track.call_func("signal", note_times, note)
+            )
+        return track_data
+
+    master_volume = vars(TrackPostEffects)["master_volume"]
+    clip_volume = vars(TrackPostEffects)["clip_volume"]
+
+    @staticmethod
+    def track_post_effects(track: Track, track_data: TrackData) -> TrackData:
+        track_data = track.call_func("master_volume", track_data)
+        track_data = track.call_func("clip_volume", track_data)
+        return track_data
+
+    @staticmethod
+    def generate(track: Track) -> TrackData:
         track_data = track.call_func("setup")
 
         track_data = track.call_func("main_logic", track_data)
 
-        track_data = track.call_func("finalize", track_data)
+        track_data = track.call_func("track_post_effects", track_data)
 
         return track_data
-
-    @staticmethod
-    def setup(track: Track) -> NDArray[np.float64]:
-        track_size = track.get_track_size()
-        track_data = np.zeros(track_size, np.float64)
-        return track_data
-
-    @staticmethod
-    def main_logic(
-        track: Track, track_data: NDArray[np.float64]
-    ) -> NDArray[np.float64]:
-        sample_rate = track.sample_rate
-        track_data = track_data
-        for note in track._notes:
-            start_frame = int(note.start * sample_rate)
-            stop_frame = int(note.stop * sample_rate)
-            track_data[start_frame:stop_frame] = track.call_func("signal", note)
-        return track_data
-
-    @staticmethod
-    def signal(track: Track, note: NoteEvent) -> NDArray[np.float64]:
-        note_data = track.call_func("wave", note) * note.volume
-        note_data = track.call_func("post_effects", note_data, note)
-        return note_data
-
-    @staticmethod
-    def finalize(_track: Track, track_data: NDArray[np.float64]) -> NDArray[np.float64]:
-        track_data = track_data * 0.2
-        peak = np.max(np.abs(track_data))
-        if peak > 0.8:
-            track_data *= 0.8 / peak
-        return track_data
-
-    post_effects = staticmethod(PostEffects.fade)
-    wave = staticmethod(Waveforms.sin)

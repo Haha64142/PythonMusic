@@ -1,7 +1,11 @@
-from track_funcs import Defaults
 import numpy as np
+from numpy.typing import NDArray
+from track_funcs import Defaults
 from typing import List, Callable, Dict, Any
 from notes import NoteEvent
+
+type TrackData = NDArray[np.float64]
+type NoteData = NDArray[np.float64]
 
 
 class Track:
@@ -84,14 +88,14 @@ class Track:
         """
         return int(self.track_time * self.sample_rate)
 
-    def generate_raw_track(self) -> np.typing.NDArray[np.float64]:
+    def generate_raw_track(self) -> TrackData:
         """
         Generate and return the actual track as a float array
 
         Float arrays allows preserving data beyond the -1.0 and 1.0 clamping. However, when actually playing float audio, anything above 1.0 or below -1.0 will get cut off. For the actual final export, using `Track.generate_track()` to generate a in16 array is generally better.
 
         Returns:
-        `NDArray[numpy.float64]`: The generated track as a float64 array
+        `TrackData`: The generated track as a float64 array
         """
         return self.call_func("generate")
 
