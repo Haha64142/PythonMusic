@@ -10,18 +10,102 @@ if TYPE_CHECKING:
 
 class ADSR:
     @staticmethod
-    def adsr_curve(times: NoteData, curvature: float) -> NoteData:
+    def base_curve(_track: Track, times: NoteData, curvature: float) -> NoteData:
         if curvature == 0:
             return times
 
+        curvature = -curvature
         return (np.exp2(curvature * times) - 1) / (math.exp2(curvature) - 1)
 
     @staticmethod
-    def inverse_adsr_curve(value: float, curvature: float) -> float:
+    def inverse_base_curve(_track: Track, value: float, curvature: float) -> float:
         if curvature == 0:
             return value
 
+        curvature = -curvature
         return math.log2(1 + value * (math.exp2(curvature) - 1)) / curvature
+
+    @staticmethod
+    def adsr_curve(
+        track: Track,
+        sample_rate: int,
+        note_on_time: float,
+        adr: tuple[float, float, float],
+        adsr_shapes: tuple[float, float, float, float],
+    ) -> tuple[float, NoteData]:
+        a, d, base_r = adr
+        a_curve, d_curve, s_volume, r_curve = adsr_shapes
+
+        note_on_frames = int(note_on_time * sample_rate)
+        a_frames = min(int(a * sample_rate), note_on_frames)
+        d_frames = min(int(d * sample_rate), note_on_frames - a_frames)
+
+        note_on_volumes = np.ones(note_on_frames) * s_volume
+        time_lookup = np.arange(max(a_frames, d_frames)) / sample_rate
+
+        note_on_volumes[0:a_frames] = track.call_func(
+            "base_curve", time_lookup[0:a_frames] / a, a_curve
+        )
+        note_on_volumes[a_frames : a_frames + d_frames] = 1 - track.call_func(
+            "base_curve", time_lookup[0:d_frames] / d, d_curve
+        ) * (1 - s_volume)
+
+        prev_volume = 0 if note_on_volumes.size == 0 else note_on_volumes[-1]
+        r_offset = track.call_func("inverse_base_curve", 1 - prev_volume, r_curve)
+        r = base_r * (1 - r_offset)
+        r_frames = int(r * sample_rate)
+
+        time_lookup = np.arange(r_frames) / sample_rate
+        release_volumes = 1 - track.call_func(
+            "base_curve", time_lookup / base_r + r_offset, r_curve
+        )
+
+        return (r, np.concat((note_on_volumes, release_volumes)))
+
+    @staticmethod
+    def gen_adsr_note(track: Track, note: NoteEvent) -> NoteEvent:
+        a: float = note.opts.get("a", track.opts.get("a", 0.01))
+        d: float = note.opts.get("d", track.opts.get("d", 0.5))
+        base_r: float = note.opts.get("r", track.opts.get("r", 0.1))
+
+        a_curve: float = note.opts.get("a_curve", track.opts.get("a_curve", 8))
+        d_curve: float = note.opts.get("d_curve", track.opts.get("d_curve", 6))
+        s_volume: float = note.opts.get("s_volume", track.opts.get("s_volume", 0.3))
+        r_curve: float = note.opts.get("r_curve", track.opts.get("r_curve", 6))
+
+        adsr_out: tuple[float, NoteData] = track.call_func(
+            "adsr_curve",
+            track.sample_rate,
+            note.stop - note.start,
+            (a, d, base_r),
+            (a_curve, d_curve, s_volume, r_curve),
+        )
+        r = adsr_out[0]
+        adsr_volumes = adsr_out[1]
+        note.stop = note.stop + r
+        note.opts["adsr_volumes"] = adsr_volumes
+        return note
+
+    @staticmethod
+    def setup(track: Track) -> TrackData:
+        max_time = track.track_time
+        for i in range(len(track._notes)):
+            note: NoteEvent = track.call_func("gen_adsr_note", track._notes[i])
+            max_time = max(note.stop, max_time)
+            track._notes[i] = note
+
+        sample_rate = track.sample_rate
+        frames = int(sample_rate * max_time)
+        return np.zeros(frames, np.float64)
+
+    @staticmethod
+    def note_post_effects(
+        _track: Track, note_data: NoteData, _note_times: NoteTimes, note: NoteEvent
+    ) -> NoteData:
+        adsr_volumes = note.opts.get("adsr_volumes")
+        if adsr_volumes is None or len(note_data) != len(adsr_volumes):
+            return note_data
+        return note_data * adsr_volumes
 
 
 class Waveforms:
@@ -83,6 +167,8 @@ class NotePostEffects:
         ]
 
         return note_data * fade_volumes
+
+    adsr = vars(ADSR)["note_post_effects"]
 
 
 class TrackPostEffects:

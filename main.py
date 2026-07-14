@@ -1,5 +1,5 @@
 import numpy as np
-from track_funcs import NotePostEffects
+from track_funcs import NotePostEffects, ADSR
 from scipy.io.wavfile import write
 from notes import Notes, NoteEvent
 from track import Track
@@ -11,6 +11,7 @@ def signal(track: Track, note: NoteEvent):
 
 sample_rate = 48000
 track = Track(sample_rate)
+track.set_default_funcs(ADSR)
 # track.opts["fade_time"] = 0.01
 # track.opts["fade_in_time"] = 0.01
 # track.opts["fade_out_time"] = 0.49
